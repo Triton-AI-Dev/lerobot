@@ -129,13 +129,14 @@ class RemoteSender(Teleoperator):
         action = self.inner.get_action()
 
         # ---- pack 5 floats into 20-byte binary payload ----
-        # ordering matches SO-100 joints (pan, lift, elbow, wrist, gripper)
+        # ordering matches SO-100 joints (pan, lift, elbow, wrist_flex, wrist_roll, gripper)
         self.sender.send(
             self._SEND(
                 action.get("shoulder_pan.pos", 0.0),
                 action.get("shoulder_lift.pos", 0.0),
                 action.get("elbow_flex.pos", 0.0),
                 action.get("wrist_flex.pos", 0.0),
+                action.get("wrist_roll.pos", 0.0),
                 action.get("gripper.pos", 0.0),
             )
         )

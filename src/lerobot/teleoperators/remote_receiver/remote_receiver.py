@@ -80,7 +80,7 @@ class RemoteReceiver(Teleoperator):
         self._stale = 0
 
         # ---- unpack 20-byte binary payload ----
-        pan, lift, elbow, wrist_flex, wrist_roll, grip = struct.unpack("<5f", buf)
+        pan, lift, elbow, wrist_flex, wrist_roll, grip = struct.unpack("<6f", buf)
         act = {
             "shoulder_pan.pos": pan,
             "shoulder_lift.pos": lift,

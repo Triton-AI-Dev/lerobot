@@ -90,6 +90,7 @@ from lerobot.teleoperators import (  # noqa: F401
 from lerobot.utils.robot_utils import busy_wait
 from lerobot.utils.utils import init_logging, move_cursor_up
 from lerobot.utils.visualization_utils import _init_rerun, log_rerun_data
+import select
 
 
 @dataclass
@@ -111,35 +112,33 @@ def teleop_loop(
     display_data: bool = False,
     duration: float | None = None,
 ):
+
+    timeout_ms = int(1_000 / fps)
+    poller = select.poll()
+    poller.register(teleop.socket_fileno, select.POLLIN)
+
     display_len = max(len(key) for key in robot.action_features)
     start = time.perf_counter()
     while True:
-        loop_start = time.perf_counter()
-        action = teleop.get_action()
-        if display_data:
-            observation = robot.get_observation()
-            log_rerun_data(observation, action)
+        if poller.poll(timeout_ms):
+            action = teleop.get_action()
+            if display_data:
+                observation = robot.get_observation()
+                log_rerun_data(observation, action)
 
-        # fast-path: drop frame if operator hasn’t moved
-        if not action:
-            continue
-        robot.send_action(action)
+            if action:
+                robot.send_action(action)
 
-        dt_s = time.perf_counter() - loop_start
-        busy_wait(1 / fps - dt_s)
+                print("\n" + "-" * (display_len + 10))
+                print(f"{'NAME':<{display_len}} | {'NORM':>7}")
+                for motor, value in action.items():
+                    print(f"{motor:<{display_len}} | {value:>7.2f}")
+                print(f"\ntime: {1_000 / fps:.2f}ms ({fps} Hz)")
 
-        loop_s = time.perf_counter() - loop_start
+                if duration is not None and time.perf_counter() - start >= duration:
+                    return
 
-        print("\n" + "-" * (display_len + 10))
-        print(f"{'NAME':<{display_len}} | {'NORM':>7}")
-        for motor, value in action.items():
-            print(f"{motor:<{display_len}} | {value:>7.2f}")
-        print(f"\ntime: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz)")
-
-        if duration is not None and time.perf_counter() - start >= duration:
-            return
-
-        move_cursor_up(len(action) + 5)
+                move_cursor_up(len(action) + 5)
 
 
 @draccus.wrap()

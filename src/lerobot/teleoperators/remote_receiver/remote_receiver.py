@@ -40,6 +40,10 @@ class RemoteReceiver(Teleoperator):
     def is_connected(self) -> bool:
         return self._connected
 
+    @property
+    def socket_fileno(self) -> int:
+        return self.receiver.sock.fileno()
+
     # Calibration / config ------------------------------------------------- #
     def calibrate(self) -> None:  # not needed for network wrapper
         pass

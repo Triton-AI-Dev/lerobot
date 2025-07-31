@@ -70,7 +70,7 @@ class RemoteReceiver(Teleoperator):
         buf = self.receiver.recv()
 
         # dropouts: reuse last action twice, then zero-out
-        if buf is None or len(buf) != 20:
+        if buf is None or len(buf) < 24:
             # treat as dropout → reuse last action or zero
             self._stale += 1
             if self._stale <= 2:

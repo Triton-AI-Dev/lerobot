@@ -114,13 +114,37 @@ def teleop_loop(
 ):
 
     timeout_ms = int(1_000 / fps)
-    poller = select.poll()
-    poller.register(teleop.socket_fileno, select.POLLIN)
+    poller = select.poll() if hasattr(teleop, "socket_fileno_recv") else None
+    if poller:
+        poller.register(teleop.socket_fileno, select.POLLIN)
 
     display_len = max(len(key) for key in robot.action_features)
     start = time.perf_counter()
     while True:
-        if poller.poll(timeout_ms):
+        if hasattr(teleop, "socket_fileno_recv"):
+            # event-driven path (remote_receiver etc.)
+            if poller.poll(timeout_ms):
+                action = teleop.get_action()
+                if display_data:
+                    observation = robot.get_observation()
+                    log_rerun_data(observation, action)
+
+                if action:
+                    robot.send_action(action)
+
+                    print("\n" + "-" * (display_len + 10))
+                    print(f"{'NAME':<{display_len}} | {'NORM':>7}")
+                    for motor, value in action.items():
+                        print(f"{motor:<{display_len}} | {value:>7.2f}")
+                    print(f"\ntime: {1_000 / fps:.2f}ms ({fps} Hz)")
+
+                    if duration is not None and time.perf_counter() - start >= duration:
+                        return
+
+                    move_cursor_up(len(action) + 5)
+        else:
+            # time-driven path (remote_sender, gamepad, leader arms …)
+            loop_start = time.perf_counter()
             action = teleop.get_action()
             if display_data:
                 observation = robot.get_observation()
@@ -139,6 +163,11 @@ def teleop_loop(
                     return
 
                 move_cursor_up(len(action) + 5)
+
+            dt = time.perf_counter() - loop_start
+            sleep = max(0, 1 / fps - dt)
+            if sleep:
+                time.sleep(sleep)
 
 
 @draccus.wrap()

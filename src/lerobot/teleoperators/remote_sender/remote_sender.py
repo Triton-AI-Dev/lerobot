@@ -27,7 +27,7 @@ class RemoteSender(Teleoperator):
     name = "remote_sender"
     config_class = RemoteSenderConfig
 
-    _SEND = struct.Struct("<5f").pack
+    _SEND = struct.Struct("<6f").pack
 
     # ───────────────────────────────────────────────────────────────────── #
     #  Construction & connectivity                                         #

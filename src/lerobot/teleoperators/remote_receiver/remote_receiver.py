@@ -42,6 +42,11 @@ class RemoteReceiver(Teleoperator):
 
     @property
     def socket_fileno(self) -> int:
+        """
+        Integer fd of the underlying UDP socket so callers can use
+        select(), poll(), epoll(), etc.  Present only on network-based
+        teleoperators.
+        """
         return self.receiver.sock.fileno()
 
     # Calibration / config ------------------------------------------------- #

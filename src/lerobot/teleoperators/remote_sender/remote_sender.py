@@ -146,10 +146,3 @@ class RemoteSender(Teleoperator):
 
     def send_feedback(self, feedback: dict[str, float]) -> None:
         self.inner.send_feedback(feedback)
-
-
-# --------------------------------------------------------------------------- #
-#  Export alias so Draccus CLI can see "remote_sender"                        #
-# --------------------------------------------------------------------------- #
-
-remote_sender = RemoteSenderConfig

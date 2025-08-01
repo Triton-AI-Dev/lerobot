@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import logging
+import socket
+import struct, itertools
 from dataclasses import dataclass
 from typing import Optional
 
@@ -25,6 +27,9 @@ class RemoteSender(Teleoperator):
     name = "remote_sender"
     config_class = RemoteSenderConfig
 
+    # 28-byte struct: 1×uint32 sequence + 6×float
+    _PACK = struct.Struct("<I6f").pack
+
     # ───────────────────────────────────────────────────────────────────── #
     #  Construction & connectivity                                         #
     # ───────────────────────────────────────────────────────────────────── #
@@ -34,6 +39,22 @@ class RemoteSender(Teleoperator):
 
         # UDP socket that points at the follower
         self.sender = UDPSender(cfg.host, cfg.port)
+        self.sender.sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 16 * 1024)
+
+        try:
+            if hasattr(socket, "SO_PRIORITY"):
+                self.sender.sock.setsockopt(socket.SOL_SOCKET, socket.SO_PRIORITY, 6)
+        except OSError:
+            pass
+
+        # Best-effort QoS: works on Linux; silently ignored on macOS/BSD
+        try:
+            self.sender.sock.setsockopt(
+                socket.IPPROTO_IP, socket.IP_TOS, 0x2E
+            )  # AF41 DSCP
+        except (AttributeError, OSError):
+            # IP_TOS not available on this platform – continue without DSCP
+            pass
 
         # Resolve the *config class* for the chosen local teleop
         choices: dict[str, type[TeleoperatorConfig]] = (
@@ -55,6 +76,7 @@ class RemoteSender(Teleoperator):
         self.inner: Teleoperator = make_teleoperator_from_config(local_cfg)
 
         self._connected = False
+        self._seq = itertools.count(1).__next__  # monotonic sequence generator
 
     # Connectivity --------------------------------------------------------- #
     def connect(self) -> None:
@@ -87,6 +109,15 @@ class RemoteSender(Teleoperator):
     def configure(self) -> None:
         self.inner.configure()
 
+    @property
+    def socket_fileno(self) -> int:
+        """
+        Integer fd of the underlying UDP socket so callers can use
+        select(), poll(), epoll(), etc.  Present only on network-based
+        teleoperators.
+        """
+        return self.sender.sock.fileno()
+
     # Action / feedback ---------------------------------------------------- #
     @property
     def action_features(self) -> dict[str, type]:
@@ -98,8 +129,20 @@ class RemoteSender(Teleoperator):
 
     def get_action(self) -> dict[str, float]:
         action = self.inner.get_action()
-        self.sender.send(action)  # stream to follower
-        return action  # echo for local display/logging
+
+        # ---- pack 1 uint32 + 6 floats into 28-byte binary payload ----
+        # ordering matches SO-100 joints (pan, lift, elbow, wrist_flex, wrist_roll, gripper)
+        buf = self._PACK(
+            self._seq() & 0xFFFFFFFF,  # wrap at 2^32-1
+            action.get("shoulder_pan.pos", 0.0),
+            action.get("shoulder_lift.pos", 0.0),
+            action.get("elbow_flex.pos", 0.0),
+            action.get("wrist_flex.pos", 0.0),
+            action.get("wrist_roll.pos", 0.0),
+            action.get("gripper.pos", 0.0),
+        )
+        self.sender.send(buf)
+        return action  # echo for on-screen display
 
     def send_feedback(self, feedback: dict[str, float]) -> None:
         self.inner.send_feedback(feedback)

@@ -8,6 +8,8 @@ from ..teleoperator import Teleoperator
 from lerobot.net.transport import UDPReceiver
 from .config_remote_receiver import RemoteReceiverConfig
 
+_UNPACK = struct.Struct("<I6f").unpack  # Updated unpacking format
+
 
 class RemoteReceiver(Teleoperator):
     """Teleoperator that receives an action dict over UDP."""
@@ -24,6 +26,7 @@ class RemoteReceiver(Teleoperator):
         self._last_keys: list[str] | None = None  # remember keys for fallback
         self._last_action: dict[str, float] = {}
         self._stale = 0
+        self._last_seq = 0  # Added sequence tracking
 
     # --------------------------------------------------------------------- #
     #  Required abstract API – implemented as simple pass-throughs / stubs   #
@@ -75,8 +78,7 @@ class RemoteReceiver(Teleoperator):
         buf = self.receiver.recv()
 
         # dropouts: reuse last action twice, then zero-out
-        if buf is None or len(buf) < 24:
-            # treat as dropout → reuse last action or zero
+        if buf is None or len(buf) != 28:  # Updated length check (4 + 6×4)
             self._stale += 1
             if self._stale <= 2:
                 return self._last_action
@@ -84,8 +86,14 @@ class RemoteReceiver(Teleoperator):
 
         self._stale = 0
 
-        # ---- unpack 20-byte binary payload ----
-        pan, lift, elbow, wrist_flex, wrist_roll, grip = struct.unpack("<6f", buf)
+        # ---- unpack 28-byte binary payload ----
+        seq, pan, lift, elbow, wrist_flex, wrist_roll, grip = _UNPACK(buf)
+
+        # drop stale or duplicated packets
+        if seq <= self._last_seq:
+            return self._last_action  # ignore & keep previous
+        self._last_seq = seq
+
         act = {
             "shoulder_pan.pos": pan,
             "shoulder_lift.pos": lift,

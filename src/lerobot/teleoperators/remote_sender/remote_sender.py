@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import logging
 import socket
-import struct
+import struct, itertools
 from dataclasses import dataclass
 from typing import Optional
 
@@ -27,7 +27,8 @@ class RemoteSender(Teleoperator):
     name = "remote_sender"
     config_class = RemoteSenderConfig
 
-    _SEND = struct.Struct("<6f").pack
+    # 28-byte struct: 1×uint32 sequence + 6×float
+    _PACK = struct.Struct("<I6f").pack
 
     # ───────────────────────────────────────────────────────────────────── #
     #  Construction & connectivity                                         #
@@ -75,6 +76,7 @@ class RemoteSender(Teleoperator):
         self.inner: Teleoperator = make_teleoperator_from_config(local_cfg)
 
         self._connected = False
+        self._seq = itertools.count(1).__next__  # monotonic sequence generator
 
     # Connectivity --------------------------------------------------------- #
     def connect(self) -> None:
@@ -128,18 +130,18 @@ class RemoteSender(Teleoperator):
     def get_action(self) -> dict[str, float]:
         action = self.inner.get_action()
 
-        # ---- pack 5 floats into 20-byte binary payload ----
+        # ---- pack 1 uint32 + 6 floats into 28-byte binary payload ----
         # ordering matches SO-100 joints (pan, lift, elbow, wrist_flex, wrist_roll, gripper)
-        self.sender.send(
-            self._SEND(
-                action.get("shoulder_pan.pos", 0.0),
-                action.get("shoulder_lift.pos", 0.0),
-                action.get("elbow_flex.pos", 0.0),
-                action.get("wrist_flex.pos", 0.0),
-                action.get("wrist_roll.pos", 0.0),
-                action.get("gripper.pos", 0.0),
-            )
+        buf = self._PACK(
+            self._seq() & 0xFFFFFFFF,  # wrap at 2^32-1
+            action.get("shoulder_pan.pos", 0.0),
+            action.get("shoulder_lift.pos", 0.0),
+            action.get("elbow_flex.pos", 0.0),
+            action.get("wrist_flex.pos", 0.0),
+            action.get("wrist_roll.pos", 0.0),
+            action.get("gripper.pos", 0.0),
         )
+        self.sender.send(buf)
         return action  # echo for on-screen display
 
     def send_feedback(self, feedback: dict[str, float]) -> None:

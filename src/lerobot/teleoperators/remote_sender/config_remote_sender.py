@@ -27,3 +27,4 @@ class RemoteSenderConfig(TeleoperatorConfig):
 
     local_type: str = "gamepad"
     local_port: str | None = None
+    local_id: Optional[str] = field(default=None, repr=False)

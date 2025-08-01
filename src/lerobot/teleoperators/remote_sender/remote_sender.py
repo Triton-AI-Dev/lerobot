@@ -72,6 +72,9 @@ class RemoteSender(Teleoperator):
             kwargs["port"] = cfg.local_port
         local_cfg = LocalCfgClass(**kwargs)
 
+        if cfg.local_id is not None:
+            local_cfg.id = cfg.local_id
+
         # Build the *actual* teleoperator instance
         self.inner: Teleoperator = make_teleoperator_from_config(local_cfg)
 

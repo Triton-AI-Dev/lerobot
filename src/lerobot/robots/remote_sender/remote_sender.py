@@ -122,3 +122,4 @@ class RemoteSender(Robot):
 
     def disconnect(self) -> None:
         self._connected = False
+        self._sender.close()

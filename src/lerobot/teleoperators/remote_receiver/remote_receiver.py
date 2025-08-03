@@ -35,6 +35,7 @@ class RemoteReceiver(Teleoperator):
     # Connectivity --------------------------------------------------------- #
     def connect(self) -> None:
         self._connected = True
+        self.receiver.close()
 
     def disconnect(self) -> None:
         self._connected = False

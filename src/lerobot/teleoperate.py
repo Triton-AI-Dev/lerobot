@@ -114,9 +114,10 @@ def teleop_loop(
 ):
 
     timeout_ms = int(1_000 / fps)
-    poller = select.poll() if hasattr(teleop, "socket_fileno_recv") else None
+    fd = getattr(teleop, "socket_fileno", None)
+    poller = select.poll() if (fd is not None and hasattr(select, "poll")) else None
     if poller:
-        poller.register(teleop.socket_fileno, select.POLLIN)
+        poller.register(fd, select.POLLIN)
 
     display_len = max(len(key) for key in robot.action_features)
     start = time.perf_counter()

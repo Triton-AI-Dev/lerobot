@@ -61,10 +61,6 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
         from .bi_so100_follower import BiSO100Follower
 
         return BiSO100Follower(config)
-    elif config.type == "none":
-        from .none import NoneRobot
-
-        return NoneRobot(config)
 
     elif config.type == "remote_sender":
         from .remote_sender import RemoteSender

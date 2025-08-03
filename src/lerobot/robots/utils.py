@@ -65,6 +65,11 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
         from .none import NoneRobot
 
         return NoneRobot(config)
+
+    elif config.type == "remote_sender":
+        from .remote_sender import RemoteSender
+
+        return RemoteSender(config)
     elif config.type == "mock_robot":
         from tests.mocks.mock_robot import MockRobot
 

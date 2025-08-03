@@ -111,61 +111,62 @@ def teleop_loop(
     display_data: bool = False,
     duration: float | None = None,
 ):
-
     timeout_ms = int(1_000 / fps)
+
     fd = getattr(teleop, "socket_fileno", None)
-    poller = select.poll() if (fd is not None and hasattr(select, "poll")) else None
+    event_driven = fd is not None and hasattr(select, "poll")
+    poller = select.poll() if event_driven else None
     if poller:
         poller.register(fd, select.POLLIN)
 
-    display_len = max(len(key) for key in robot.action_features)
+    display_len = max((len(k) for k in robot.action_features), default=0)
     start = time.perf_counter()
+
+    def process_once() -> bool:
+        """Fetch one action, (optionally) log, send to robot, and print. Returns True if an action was sent."""
+        action = teleop.get_action()
+
+        if display_data:
+            observation = robot.get_observation()
+            log_rerun_data(observation, action)
+
+        if not action:
+            return False
+
+        robot.send_action(action)
+
+        print("\n" + "-" * (display_len + 10))
+        print(f"{'NAME':<{display_len}} | {'NORM':>7}")
+        for motor, value in action.items():
+            print(f"{motor:<{display_len}} | {value:>7.2f}")
+        print(f"\ntime: {1_000 / fps:.2f}ms ({fps} Hz)")
+        move_cursor_up(len(action) + 5)
+
+        return True
+
     while True:
-        if hasattr(teleop, "socket_fileno_recv"):
-            # event-driven path (remote_receiver etc.)
+        if event_driven:
             if poller.poll(timeout_ms):
-                action = teleop.get_action()
-                if display_data:
-                    observation = robot.get_observation()
-                    log_rerun_data(observation, action)
-
-                if action:
-                    robot.send_action(action)
-
-                    print("\n" + "-" * (display_len + 10))
-                    print(f"{'NAME':<{display_len}} | {'NORM':>7}")
-                    for motor, value in action.items():
-                        print(f"{motor:<{display_len}} | {value:>7.2f}")
-                    print(f"\ntime: {1_000 / fps:.2f}ms ({fps} Hz)")
-
-                    if duration is not None and time.perf_counter() - start >= duration:
-                        return
-
-                    move_cursor_up(len(action) + 5)
-        else:
-            # time-driven path (remote_sender, gamepad, leader arms …)
-            loop_start = time.perf_counter()
-            action = teleop.get_action()
-            if display_data:
-                observation = robot.get_observation()
-                log_rerun_data(observation, action)
-
-            if action:
-                robot.send_action(action)
-
-                print("\n" + "-" * (display_len + 10))
-                print(f"{'NAME':<{display_len}} | {'NORM':>7}")
-                for motor, value in action.items():
-                    print(f"{motor:<{display_len}} | {value:>7.2f}")
-                print(f"\ntime: {1_000 / fps:.2f}ms ({fps} Hz)")
-
-                if duration is not None and time.perf_counter() - start >= duration:
+                sent = process_once()
+                if (
+                    sent
+                    and duration is not None
+                    and time.perf_counter() - start >= duration
+                ):
                     return
+        else:
+            loop_start = time.perf_counter()
 
-                move_cursor_up(len(action) + 5)
+            sent = process_once()
+            if (
+                sent
+                and duration is not None
+                and time.perf_counter() - start >= duration
+            ):
+                return
 
             dt = time.perf_counter() - loop_start
-            sleep = max(0, 1 / fps - dt)
+            sleep = max(0.0, 1.0 / fps - dt)
             if sleep:
                 time.sleep(sleep)
 

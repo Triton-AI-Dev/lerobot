@@ -73,6 +73,7 @@ from lerobot.robots import (  # noqa: F401
     so100_follower,
     so101_follower,
     none,
+    remote_sender,
 )
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
@@ -85,7 +86,6 @@ from lerobot.teleoperators import (  # noqa: F401
     so100_leader,
     so101_leader,
     remote_receiver,
-    remote_sender,
 )
 from lerobot.utils.robot_utils import busy_wait
 from lerobot.utils.utils import init_logging, move_cursor_up

@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from ..config import RobotConfig
 
 
+@RobotConfig.register_subclass("remote_sender")
 @dataclass
 class RemoteSenderConfig(RobotConfig):
     """

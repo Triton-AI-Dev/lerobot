@@ -17,6 +17,9 @@ class UDPSender:
             data = json.dumps(msg).encode()
         self.sock.sendto(data, self.addr)
 
+    def close(self):
+        self.sock.close()
+
 
 class UDPReceiver:
     def __init__(self, port: int, bufsize: int = 2048, timeout: float = 0.005):
@@ -34,3 +37,6 @@ class UDPReceiver:
                 return data
         except socket.timeout:
             return None
+
+    def close(self):
+        self.sock.close()

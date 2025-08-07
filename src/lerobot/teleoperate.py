@@ -149,9 +149,6 @@ def _make_process_once(
     return _inner
 
 
-# ------------------------------------------------------------------------- #
-# Main loop
-# ------------------------------------------------------------------------- #
 def teleop_loop(
     teleop: Teleoperator,
     robot: Robot,
@@ -159,51 +156,61 @@ def teleop_loop(
     display_data: bool = False,
     duration: float | None = None,
 ):
+
     timeout_ms = int(1_000 / fps)
-
-    # ---------- event-driven setup (only if FD is valid & poll exists) ---- #
     fd = getattr(teleop, "socket_fileno", None)
-    event_driven = isinstance(fd, int) and fd >= 0 and hasattr(select, "poll")
+    poller = select.poll() if (fd is not None and hasattr(select, "poll")) else None
+    if poller:
+        poller.register(fd, select.POLLIN)
 
-    poller = select.poll() if event_driven else None
-    if event_driven:
-        try:
-            poller.register(fd, select.POLLIN | select.POLLERR | select.POLLHUP)
-        except ValueError:  # FD turned out to be invalid
-            event_driven = False
-            poller = None
-
-    display_len = max((len(k) for k in robot.action_features), default=0)
-    process_once = _make_process_once(teleop, robot, display_data, fps, display_len)
+    display_len = max(len(key) for key in robot.action_features)
     start = time.perf_counter()
-
     while True:
-        if event_driven:
-            # Wait for up to timeout_ms; may return an empty list.
-            for _, mask in poller.poll(timeout_ms):
-                # We only care about “read ready.”
-                if mask & select.POLLIN:
-                    sent = process_once()
-                    if (
-                        sent
-                        and duration is not None
-                        and time.perf_counter() - start >= duration
-                    ):
+        if hasattr(teleop, "socket_fileno_recv"):
+            # event-driven path (remote_receiver etc.)
+            if poller.poll(timeout_ms):
+                action = teleop.get_action()
+                if display_data:
+                    observation = robot.get_observation()
+                    log_rerun_data(observation, action)
+
+                if action:
+                    robot.send_action(action)
+
+                    print("\n" + "-" * (display_len + 10))
+                    print(f"{'NAME':<{display_len}} | {'NORM':>7}")
+                    for motor, value in action.items():
+                        print(f"{motor:<{display_len}} | {value:>7.2f}")
+                    print(f"\ntime: {1_000 / fps:.2f}ms ({fps} Hz)")
+
+                    if duration is not None and time.perf_counter() - start >= duration:
                         return
-                # You might handle POLLERR / POLLHUP here if desired.
+
+                    move_cursor_up(len(action) + 5)
         else:
+            # time-driven path (remote_sender, gamepad, leader arms …)
             loop_start = time.perf_counter()
+            action = teleop.get_action()
+            if display_data:
+                observation = robot.get_observation()
+                log_rerun_data(observation, action)
 
-            sent = process_once()
-            if (
-                sent
-                and duration is not None
-                and time.perf_counter() - start >= duration
-            ):
-                return
+            if action:
+                robot.send_action(action)
 
-            # Sleep to maintain target FPS
-            sleep = max(0.0, 1.0 / fps - (time.perf_counter() - loop_start))
+                print("\n" + "-" * (display_len + 10))
+                print(f"{'NAME':<{display_len}} | {'NORM':>7}")
+                for motor, value in action.items():
+                    print(f"{motor:<{display_len}} | {value:>7.2f}")
+                print(f"\ntime: {1_000 / fps:.2f}ms ({fps} Hz)")
+
+                if duration is not None and time.perf_counter() - start >= duration:
+                    return
+
+                move_cursor_up(len(action) + 5)
+
+            dt = time.perf_counter() - loop_start
+            sleep = max(0, 1 / fps - dt)
             if sleep:
                 time.sleep(sleep)
 

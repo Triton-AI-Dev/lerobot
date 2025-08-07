@@ -90,6 +90,10 @@ from lerobot.utils.robot_utils import busy_wait
 from lerobot.utils.utils import init_logging, move_cursor_up
 from lerobot.utils.visualization_utils import _init_rerun, log_rerun_data
 import select
+import errno
+import select
+import time
+from typing import Any
 
 
 @dataclass
@@ -104,6 +108,50 @@ class TeleoperateConfig:
     display_data: bool = False
 
 
+# ------------------------------------------------------------------------- #
+# Helper to fetch-→visualize-→send-→print  (shared by both branches)
+# ------------------------------------------------------------------------- #
+def _make_process_once(
+    teleop,
+    robot,
+    display_data: bool,
+    fps: int,
+    display_len: int,
+):
+    def _inner() -> bool:
+        try:
+            action = teleop.get_action()
+        except OSError as e:
+            # Ignore “would block” and quietly continue; re-raise other errors
+            if e.errno in (errno.EAGAIN, errno.EWOULDBLOCK):
+                return False
+            raise
+
+        if not action:
+            return False
+
+        if display_data:
+            observation = robot.get_observation()
+            log_rerun_data(observation, action)
+
+        robot.send_action(action)
+
+        # Pretty print ---------------------------------------------------- #
+        print("\n" + "-" * (display_len + 10))
+        print(f"{'NAME':<{display_len}} | {'NORM':>7}")
+        for motor, value in action.items():
+            print(f"{motor:<{display_len}} | {value:>7.2f}")
+        print(f"\ntime: {1_000 / fps:.2f}ms ({fps} Hz)")
+        move_cursor_up(len(action) + 5)
+        # ----------------------------------------------------------------- #
+        return True
+
+    return _inner
+
+
+# ------------------------------------------------------------------------- #
+# Main loop
+# ------------------------------------------------------------------------- #
 def teleop_loop(
     teleop: Teleoperator,
     robot: Robot,
@@ -113,53 +161,36 @@ def teleop_loop(
 ):
     timeout_ms = int(1_000 / fps)
 
+    # ---------- event-driven setup (only if FD is valid & poll exists) ---- #
     fd = getattr(teleop, "socket_fileno", None)
     event_driven = isinstance(fd, int) and fd >= 0 and hasattr(select, "poll")
 
     poller = select.poll() if event_driven else None
     if event_driven:
         try:
-            poller.register(fd, select.POLLIN)
-        except ValueError:
+            poller.register(fd, select.POLLIN | select.POLLERR | select.POLLHUP)
+        except ValueError:  # FD turned out to be invalid
             event_driven = False
             poller = None
 
     display_len = max((len(k) for k in robot.action_features), default=0)
+    process_once = _make_process_once(teleop, robot, display_data, fps, display_len)
     start = time.perf_counter()
-
-    def process_once() -> bool:
-        """Fetch → (optionally) visualize → send → print.
-        Returns True iff an action was sent to the robot."""
-        action = teleop.get_action()
-
-        if display_data:
-            observation = robot.get_observation()
-            log_rerun_data(observation, action)
-
-        if not action:
-            return False
-
-        robot.send_action(action)
-
-        print("\n" + "-" * (display_len + 10))
-        print(f"{'NAME':<{display_len}} | {'NORM':>7}")
-        for motor, value in action.items():
-            print(f"{motor:<{display_len}} | {value:>7.2f}")
-        print(f"\ntime: {1_000 / fps:.2f}ms ({fps} Hz)")
-        move_cursor_up(len(action) + 5)
-
-        return True
 
     while True:
         if event_driven:
-            if poller.poll(timeout_ms):
-                sent = process_once()
-                if (
-                    sent
-                    and duration is not None
-                    and time.perf_counter() - start >= duration
-                ):
-                    return
+            # Wait for up to timeout_ms; may return an empty list.
+            for _, mask in poller.poll(timeout_ms):
+                # We only care about “read ready.”
+                if mask & select.POLLIN:
+                    sent = process_once()
+                    if (
+                        sent
+                        and duration is not None
+                        and time.perf_counter() - start >= duration
+                    ):
+                        return
+                # You might handle POLLERR / POLLHUP here if desired.
         else:
             loop_start = time.perf_counter()
 
@@ -171,8 +202,8 @@ def teleop_loop(
             ):
                 return
 
-            dt = time.perf_counter() - loop_start
-            sleep = max(0.0, 1.0 / fps - dt)
+            # Sleep to maintain target FPS
+            sleep = max(0.0, 1.0 / fps - (time.perf_counter() - loop_start))
             if sleep:
                 time.sleep(sleep)
 

@@ -78,6 +78,18 @@ class RemoteReceiver(Teleoperator):
 
     def get_action(self) -> dict[str, float]:
         buf = self.receiver.recv()
+        try:
+            buf = self.receiver.recv()
+        except OSError as exc:
+            # fd = -1  → recreate the UDP socket once and retry
+            if exc.errno == 9:  # EBADF
+                self.receiver = UDPReceiver(self.cfg.port)
+                self.receiver.sock.setsockopt(
+                    socket.SOL_SOCKET, socket.SO_RCVBUF, 16 * 1024
+                )
+                buf = self.receiver.recv()  # one more attempt
+            else:
+                raise
 
         # dropouts: reuse last action twice, then zero-out
         if buf is None or len(buf) != 28:  # Updated length check (4 + 6×4)

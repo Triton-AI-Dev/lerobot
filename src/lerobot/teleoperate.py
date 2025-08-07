@@ -60,7 +60,9 @@ import draccus
 import rerun as rr
 
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
-from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
+from lerobot.cameras.realsense.configuration_realsense import (
+    RealSenseCameraConfig,
+)  # noqa: F401
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
@@ -70,6 +72,7 @@ from lerobot.robots import (  # noqa: F401
     make_robot_from_config,
     so100_follower,
     so101_follower,
+    remote_sender,
 )
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
@@ -81,10 +84,16 @@ from lerobot.teleoperators import (  # noqa: F401
     make_teleoperator_from_config,
     so100_leader,
     so101_leader,
+    remote_receiver,
 )
 from lerobot.utils.robot_utils import busy_wait
 from lerobot.utils.utils import init_logging, move_cursor_up
 from lerobot.utils.visualization_utils import _init_rerun, log_rerun_data
+import select
+import errno
+import select
+import time
+from typing import Any
 
 
 @dataclass
@@ -100,33 +109,72 @@ class TeleoperateConfig:
 
 
 def teleop_loop(
-    teleop: Teleoperator, robot: Robot, fps: int, display_data: bool = False, duration: float | None = None
+    teleop: Teleoperator,
+    robot: Robot,
+    fps: int,
+    display_data: bool = False,
+    duration: float | None = None,
 ):
-    display_len = max(len(key) for key in robot.action_features)
+    import errno, select, time
+
+    timeout_ms = int(1_000 / fps)
+
+    # ── event-driven? ────────────────────────────────────────────────────
+    fd = getattr(teleop, "socket_fileno", None)
+    poller: select.poll | None = None
+    if isinstance(fd, int) and fd >= 0 and hasattr(select, "poll"):
+        try:
+            poller = select.poll()
+            poller.register(fd, select.POLLIN | select.POLLERR | select.POLLHUP)
+        except ValueError:  # fd not poll-able after all
+            poller = None
+
+    display_len = max((len(k) for k in robot.action_features), default=0)
     start = time.perf_counter()
-    while True:
-        loop_start = time.perf_counter()
-        action = teleop.get_action()
+
+    # ── common work unit ────────────────────────────────────────────────
+    def process_once() -> bool:
+        try:
+            action = teleop.get_action()
+        except OSError as exc:
+            if exc.errno in (errno.EAGAIN, errno.EWOULDBLOCK):
+                return False  # nothing ready yet
+            raise  # any other error is fatal
+
+        if not action:
+            return False
+
         if display_data:
             observation = robot.get_observation()
             log_rerun_data(observation, action)
 
         robot.send_action(action)
-        dt_s = time.perf_counter() - loop_start
-        busy_wait(1 / fps - dt_s)
-
-        loop_s = time.perf_counter() - loop_start
 
         print("\n" + "-" * (display_len + 10))
         print(f"{'NAME':<{display_len}} | {'NORM':>7}")
-        for motor, value in action.items():
-            print(f"{motor:<{display_len}} | {value:>7.2f}")
-        print(f"\ntime: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz)")
-
-        if duration is not None and time.perf_counter() - start >= duration:
-            return
-
+        for k, v in action.items():
+            print(f"{k:<{display_len}} | {v:>7.2f}")
+        print(f"\ntime: {1_000 / fps:.2f}ms ({fps} Hz)")
         move_cursor_up(len(action) + 5)
+        return True
+
+    # ── main loop ───────────────────────────────────────────────────────
+    while True:
+        if poller:  # event-driven
+            for _, mask in poller.poll(timeout_ms):
+                if mask & select.POLLIN:
+                    if (
+                        process_once()
+                        and duration
+                        and time.perf_counter() - start >= duration
+                    ):
+                        return
+                # POLLERR / POLLHUP are ignored; socket self-heals in get_action()
+        else:  # time-driven
+            t0 = time.perf_counter()
+            if process_once() and duration and time.perf_counter() - start >= duration:
+                return
+            time.sleep(max(0.0, 1.0 / fps - (time.perf_counter() - t0)))
 
 
 @draccus.wrap()
@@ -143,7 +191,13 @@ def teleoperate(cfg: TeleoperateConfig):
     robot.connect()
 
     try:
-        teleop_loop(teleop, robot, cfg.fps, display_data=cfg.display_data, duration=cfg.teleop_time_s)
+        teleop_loop(
+            teleop,
+            robot,
+            cfg.fps,
+            display_data=cfg.display_data,
+            duration=cfg.teleop_time_s,
+        )
     except KeyboardInterrupt:
         pass
     finally:

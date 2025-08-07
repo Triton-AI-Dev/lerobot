@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 from __future__ import annotations
 
+import logging
 import socket
 import struct
 
@@ -82,6 +83,8 @@ class RemoteReceiver(Teleoperator):
         if buf is None or len(buf) != 28:  # Updated length check (4 + 6×4)
             self._stale += 1
             if self._stale <= 2:
+                if self._stale == 2:
+                    logging.info("stale=2 (missing pkt)")
                 return self._last_action
             return {k: 0.0 for k in self._last_action}
 

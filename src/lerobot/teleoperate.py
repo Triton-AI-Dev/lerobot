@@ -114,16 +114,22 @@ def teleop_loop(
     timeout_ms = int(1_000 / fps)
 
     fd = getattr(teleop, "socket_fileno", None)
-    event_driven = fd is not None and hasattr(select, "poll")
+    event_driven = isinstance(fd, int) and fd >= 0 and hasattr(select, "poll")
+
     poller = select.poll() if event_driven else None
-    if poller:
-        poller.register(fd, select.POLLIN)
+    if event_driven:
+        try:
+            poller.register(fd, select.POLLIN)
+        except ValueError:
+            event_driven = False
+            poller = None
 
     display_len = max((len(k) for k in robot.action_features), default=0)
     start = time.perf_counter()
 
     def process_once() -> bool:
-        """Fetch one action, (optionally) log, send to robot, and print. Returns True if an action was sent."""
+        """Fetch → (optionally) visualize → send → print.
+        Returns True iff an action was sent to the robot."""
         action = teleop.get_action()
 
         if display_data:

@@ -447,12 +447,12 @@ def convert_remote_msg_to_action(msg: dict) -> dict:
     # Left arm
     left = msg.get("left_arm_positions", {})
     for joint, value in left.items():
-        action[f"left_{joint}"] = value
+        action[f"left_{joint}.pos"] = value
 
     # Right arm
     right = msg.get("right_arm_positions", {})
     for joint, value in right.items():
-        action[f"right_{joint}"] = value
+        action[f"right_{joint}.pos"] = value
 
     return action
 
@@ -461,7 +461,7 @@ def teleop_listener_thread():
     global LastRemoteAction
 
     # highest_msg_idx records the highest message received
-    highest_msg_idx = -1
+    highest_msg_idx = 0
 
     # bind to the interface, we set the socket to enable reuse in the event the program crashes
     # and need to quickly re-bind to the interface
